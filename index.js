@@ -95,10 +95,12 @@
  * 机制），执行层最上层保证；同时固化进 ~/.dsh/AGENTS.md 交互铁律第 6 条
  * （跨会话最上层兜底）与 Mnemon 记忆。
  */
-import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   closeSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -398,7 +400,7 @@ const LOCK_PATH = join(LOCK_DIR, 'ilink-owner.lock')
 const MAP_PATH = join(LOCK_DIR, 'conversations.json')
 /** 安装目录不当工作区首选：无头宿主 cwd 落在这里，侧边栏也没有对应工作区。 */
 const INSTALL_DIR_RE = /(?:^|[\\/])Program Files[\\/]DSH Desktop(?:$|[\\/])/i
-const FALLBACK_CWD = 'E:\\desktop\\所有skill\\mobil'
+const FALLBACK_CWD = homedir()
 
 function isInstallDir(p) {
   return INSTALL_DIR_RE.test(String(p ?? ''))
@@ -1412,17 +1414,17 @@ export function apply(ctx, config) {
     {
       const FIXED_BASE_URL = 'https://ilinkai.weixin.qq.com'
       const BOT_TYPE = '3'
-      const openclawDir = path.join(os.homedir(), '.openclaw', 'openclaw-weixin')
-      const accountsDir = path.join(openclawDir, 'accounts')
-      const indexFile = path.join(openclawDir, 'accounts.json')
+      const openclawDir = join(homedir(), '.openclaw', 'openclaw-weixin')
+      const accountsDir = join(openclawDir, 'accounts')
+      const indexFile = join(openclawDir, 'accounts.json')
 
       let QRCode
       try {
-        const req = createRequire('C:/Users/Administrator/.dsh/profiles/desktop/package.json')
+        const req = createRequire(import.meta.url)
         QRCode = req('qrcode')
       } catch {
         try {
-          const req2 = createRequire(import.meta.url)
+          const req2 = createRequire(join(DSH_HOME, 'profiles', 'desktop', 'package.json'))
           QRCode = req2('qrcode')
         } catch (err) {
           ctx.logger?.warn?.('[dsh-weixin-plus] qrcode module not loaded:', err?.message)
@@ -1437,16 +1439,16 @@ export function apply(ctx, config) {
 
       function getSavedAccounts() {
         try {
-          if (!fs.existsSync(indexFile)) return []
-          const content = fs.readFileSync(indexFile, 'utf8')
+          if (!existsSync(indexFile)) return []
+          const content = readFileSync(indexFile, 'utf8')
           const ids = JSON.parse(content)
           if (!Array.isArray(ids)) return []
           return ids.map((id) => {
-            const file = path.join(accountsDir, `${id}.json`)
+            const file = join(accountsDir, `${id}.json`)
             let data = {}
-            if (fs.existsSync(file)) {
+            if (existsSync(file)) {
               try {
-                data = JSON.parse(fs.readFileSync(file, 'utf8'))
+                data = JSON.parse(readFileSync(file, 'utf8'))
               } catch {}
             }
             return {
@@ -1463,15 +1465,15 @@ export function apply(ctx, config) {
       }
 
       function randomWechatUin() {
-        const uint32 = crypto.randomBytes(4).readUInt32BE(0)
+        const uint32 = randomBytes(4).readUInt32BE(0)
         return Buffer.from(String(uint32), 'utf-8').toString('base64')
       }
 
       async function checkLiveToken(accountId) {
         try {
-          const file = path.join(accountsDir, `${accountId}.json`)
-          if (!fs.existsSync(file)) return { connected: false, reason: 'no_account_file' }
-          const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+          const file = join(accountsDir, `${accountId}.json`)
+          if (!existsSync(file)) return { connected: false, reason: 'no_account_file' }
+          const data = JSON.parse(readFileSync(file, 'utf8'))
           if (!data.token) return { connected: false, reason: 'no_token' }
 
           const baseUrl = (data.baseUrl || FIXED_BASE_URL).replace(/\/+$/, '')
@@ -1531,12 +1533,12 @@ export function apply(ctx, config) {
       }
 
       function saveAccountCredentials(accountId, creds) {
-        fs.mkdirSync(accountsDir, { recursive: true })
-        const file = path.join(accountsDir, `${accountId}.json`)
+        mkdirSync(accountsDir, { recursive: true })
+        const file = join(accountsDir, `${accountId}.json`)
         let existing = {}
-        if (fs.existsSync(file)) {
+        if (existsSync(file)) {
           try {
-            existing = JSON.parse(fs.readFileSync(file, 'utf8'))
+            existing = JSON.parse(readFileSync(file, 'utf8'))
           } catch {}
         }
         const next = {
@@ -1546,18 +1548,18 @@ export function apply(ctx, config) {
           userId: creds.userId || existing.userId,
           savedAt: new Date().toISOString(),
         }
-        fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8')
+        writeFileSync(file, JSON.stringify(next, null, 2), 'utf8')
 
         let ids = []
-        if (fs.existsSync(indexFile)) {
+        if (existsSync(indexFile)) {
           try {
-            ids = JSON.parse(fs.readFileSync(indexFile, 'utf8'))
+            ids = JSON.parse(readFileSync(indexFile, 'utf8'))
             if (!Array.isArray(ids)) ids = []
           } catch {}
         }
         if (!ids.includes(accountId)) {
           ids.unshift(accountId)
-          fs.writeFileSync(indexFile, JSON.stringify(ids, null, 2), 'utf8')
+          writeFileSync(indexFile, JSON.stringify(ids, null, 2), 'utf8')
         }
       }
 
@@ -1705,18 +1707,18 @@ export function apply(ctx, config) {
           const idToClear = targetAccountId || (accounts[0] && accounts[0].accountId)
           if (!idToClear) return { ok: true, message: '当前无已绑定账号' }
 
-          const file = path.join(accountsDir, `${idToClear}.json`)
-          if (fs.existsSync(file)) fs.unlinkSync(file)
+          const file = join(accountsDir, `${idToClear}.json`)
+          if (existsSync(file)) unlinkSync(file)
 
-          const syncBufFile = path.join(accountsDir, `${idToClear}.sync.json`)
-          if (fs.existsSync(syncBufFile)) fs.unlinkSync(syncBufFile)
+          const syncBufFile = join(accountsDir, `${idToClear}.sync.json`)
+          if (existsSync(syncBufFile)) unlinkSync(syncBufFile)
 
-          if (fs.existsSync(indexFile)) {
+          if (existsSync(indexFile)) {
             try {
-              const ids = JSON.parse(fs.readFileSync(indexFile, 'utf8'))
+              const ids = JSON.parse(readFileSync(indexFile, 'utf8'))
               if (Array.isArray(ids)) {
                 const nextIds = ids.filter((x) => x !== idToClear)
-                fs.writeFileSync(indexFile, JSON.stringify(nextIds, null, 2), 'utf8')
+                writeFileSync(indexFile, JSON.stringify(nextIds, null, 2), 'utf8')
               }
             } catch {}
           }
