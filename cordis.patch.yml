@@ -1,0 +1,3 @@
+# DSH 微信通道配置 patch
+- id: weixin-plus
+  plugin: ./index.js
