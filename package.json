@@ -1,30 +1,44 @@
 {
   "name": "dsh-weixin-plus",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DSH 微信通道增强插件 — 集成 iLink 消息双向桥接、单实例锁、大文件智能投递与 Web 设置管理界面",
   "type": "module",
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
-    "./client": "./client.js"
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
   "dsh": {
-    "client": "./client.js"
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
   },
-  "cordis": {
-    "patch": "./cordis.patch.yml"
-  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "wechat",
+    "weixin",
+    "ilink"
+  ],
   "dependencies": {
     "weixin-agent-sdk": "^0.3.0",
     "qrcode": "^1.5.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "dsh": "*"
+    "@deepseek-ai/cordis": ">=4.0.1 <5.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/liushQAQ/dsh-weixin-plus.git"
+    "url": "git+https://github.com/liushQAQ/dsh-weixin-plus.git"
+  },
+  "homepage": "https://github.com/liushQAQ/dsh-weixin-plus#readme",
+  "bugs": {
+    "url": "https://github.com/liushQAQ/dsh-weixin-plus/issues"
   },
   "author": "liushQAQ",
   "license": "MIT"

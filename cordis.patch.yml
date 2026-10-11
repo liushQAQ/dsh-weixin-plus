@@ -1,3 +1,4 @@
-# DSH 微信通道配置 patch
-- id: weixin-plus
-  plugin: ./index.js
+# DSH 微信通道增强插件 bundle patch
+- insert:
+    - id: weixin-plus
+      name: dsh-weixin-plus
