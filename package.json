@@ -1,6 +1,6 @@
 {
   "name": "dsh-weixin-plus",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "DSH 微信通道增强插件 — 集成 iLink 消息双向桥接、单实例锁、大文件智能投递与 Web 设置管理界面",
   "type": "module",
   "main": "./index.js",

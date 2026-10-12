@@ -63,7 +63,8 @@ window.__ModuleLoader__.load({
         }
 
         // 回退 HTTP fetch
-        const res = await fetch(`/dsh-weixin-plus/${action}`, {
+        const baseUrl = (typeof window !== 'undefined' && window.location && window.location.pathname.startsWith('/dsh/')) ? '/dsh/dsh-weixin-plus/' : '/dsh-weixin-plus/';
+        const res = await fetch(baseUrl + action, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

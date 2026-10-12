@@ -119,7 +119,7 @@ import { isLoggedIn, start } from 'weixin-agent-sdk'
 
 export const name = 'dsh-weixin-plus'
 
-export const inject = ['agentDefaultModel', 'agents', 'workspaceRegistry', 'sessionPersistence', 'agentPresets']
+export const inject = ['agentDefaultModel', 'agents', 'workspaceRegistry', 'sessionPersistence', 'agentPresets', 'webServer', 'connection']
 
 export const Config = Schema.object({
   /** agent 的工作目录。缺省取已有工作区（跳过 Program Files 安装目录），新会话才能进侧边栏。 */
@@ -1834,6 +1834,7 @@ export function apply(ctx, config) {
       // 2. 同时提供 HTTP 路由作为备用诊断接口
       ctx.inject(['webServer'], (innerCtx) => {
         return innerCtx.webServer.register({
+          kind: 'prefix',
           path: '/dsh-weixin-plus',
           authority: 'public',
           handler: async (req, res) => {
