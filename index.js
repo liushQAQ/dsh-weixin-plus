@@ -1809,9 +1809,17 @@ export function apply(ctx, config) {
       ctx.inject(['connection'], (innerCtx) => {
         innerCtx.connection.rpc.handle('/dsh-weixin-plus', async (action, payload) => {
           try {
-            return await handleAction(action, payload || {})
+            const res = await handleAction(action, payload || {})
+            return { ok: true, value: res }
           } catch (err) {
-            return { ok: false, error: err?.message || String(err) }
+            return {
+              ok: false,
+              error: {
+                code: 'internal',
+                message: err?.message || String(err),
+                details: {}
+              }
+            }
           }
         })
       })

@@ -44,7 +44,15 @@ window.__ModuleLoader__.load({
       const callApi = async (action, payload = {}) => {
         const conn = getConnection();
         if (conn && conn.rpc && typeof conn.rpc.call === 'function') {
-          return await conn.rpc.call(RPC_CHANNEL, action, payload);
+          const res = await conn.rpc.call(RPC_CHANNEL, action, payload);
+          // conn.rpc.call 校验信封后返回 { ok: true, value: ... } 或 { ok: false, error: ... }
+          if (res && res.ok === true) {
+            return res.value;
+          }
+          if (res && res.ok === false) {
+            throw new Error(res.error?.message || 'RPC调用失败');
+          }
+          return res;
         }
         // 回退 HTTP fetch
         const res = await fetch(`/dsh-weixin-plus/${action}`, {
