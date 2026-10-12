@@ -43,21 +43,32 @@ window.__ModuleLoader__.load({
       // 统一调用通道：优先走 Cordis Connection RPC，若不在 RPC 上下文中则优雅回退至 HTTP fetch
       const callApi = async (action, payload = {}) => {
         const conn = getConnection();
+        // 尝试 RPC 调用
         if (conn && conn.rpc && typeof conn.rpc.call === 'function') {
-          const res = await conn.rpc.call(RPC_CHANNEL, action, payload);
-          // conn.rpc.call 校验信封后返回 { ok: true, value: ... } 或 { ok: false, error: ... }
-          if (res && res.ok === true) {
-            return res.value;
+          try {
+            const res = await conn.rpc.call(RPC_CHANNEL, action, payload);
+            if (res && res.ok === true) {
+              return res.value;
+            }
+            if (res && res.ok === false) {
+              throw new Error(res.error?.message || 'RPC调用失败');
+            }
+            if (res && typeof res === 'object') {
+              return res;
+            }
+          } catch (rpcErr) {
+            console.warn('[dsh-weixin-plus] RPC call failed, falling back to HTTP:', rpcErr);
+            // 若不是取消操作，继续向下回退至 HTTP
           }
-          if (res && res.ok === false) {
-            throw new Error(res.error?.message || 'RPC调用失败');
-          }
-          return res;
         }
+
         // 回退 HTTP fetch
         const res = await fetch(`/dsh-weixin-plus/${action}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-dsh-desktop-renderer': '1'
+          },
           body: JSON.stringify(payload),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

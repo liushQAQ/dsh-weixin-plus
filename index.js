@@ -1805,23 +1805,30 @@ export function apply(ctx, config) {
         return { ok: false, error: 'unknown_action' }
       }
 
-      // 1. 注册 Cordis Connection RPC 通道（天然免 403，支持 Electron 渲染器与普通浏览器）
+      // 1. 注册 Cordis Connection RPC 通道（天然免 403，兼容斜杠/无斜杠前缀，标准 bad-request 错误信封）
       ctx.inject(['connection'], (innerCtx) => {
-        innerCtx.connection.rpc.handle('/dsh-weixin-plus', async (action, payload) => {
+        const rpcHandler = async (actionOrEndpoint, payloadOrEmpty = {}) => {
           try {
-            const res = await handleAction(action, payload || {})
+            let act = actionOrEndpoint
+            let payload = payloadOrEmpty || {}
+            if (typeof act === 'string' && act.startsWith('/')) {
+              act = act.replace(/^\/+/, '')
+            }
+            const res = await handleAction(act, payload)
             return { ok: true, value: res }
           } catch (err) {
             return {
               ok: false,
               error: {
-                code: 'internal',
+                code: 'bad-request',
                 message: err?.message || String(err),
-                details: {}
+                details: { issues: [{ message: err?.message || String(err) }] }
               }
             }
           }
-        })
+        }
+        innerCtx.connection.rpc.handle('/dsh-weixin-plus', rpcHandler)
+        innerCtx.connection.rpc.handle('dsh-weixin-plus', rpcHandler)
       })
 
       // 2. 同时提供 HTTP 路由作为备用诊断接口
