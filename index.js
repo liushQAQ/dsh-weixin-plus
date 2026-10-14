@@ -270,7 +270,15 @@ const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v', '.avi', '.mkv', '.webm', '.wm
 
 function mediaKind(path) {
   const ext = extname(path).toLowerCase()
-  if (IMAGE_EXT.has(ext)) return 'image'
+  if (IMAGE_EXT.has(ext)) {
+    try {
+      const st = statSync(path)
+      // 微信官方 CDN 对 media_type: 1 (IMAGE图片直显气泡) 存在服务端 ~2MB 物理上限，超限抛 500。
+      // 当图片体积 > 2MB 时，直接按 'file' 类型出站，走 25MB 无损文件通道，保证画质零损失并根治 500。
+      if (st.size > 2 * 1024 * 1024) return 'file'
+    } catch {}
+    return 'image'
+  }
   if (VIDEO_EXT.has(ext)) return 'video'
   return 'file'
 }
@@ -635,8 +643,59 @@ function modelSwitchNotice(previous, selected) {
   })
 }
 
+/**
+ * 自动修复 weixin-agent-sdk 对 >2MB 大图硬编码走 media_type:1 导致微信官方 CDN 抛 500 的底层缺陷。
+ * 在插件加载时自动执行幂等自愈检查，若发现 SDK 未打补丁则动态修补，确保任何环境下均零配置生效。
+ */
+function patchWeixinAgentSdk(logger) {
+  try {
+    const req = createRequire(import.meta.url)
+    const sdkEntry = req.resolve('weixin-agent-sdk')
+    if (!existsSync(sdkEntry)) return
+    const content = readFileSync(sdkEntry, 'utf8')
+    if (content.includes('sendWeixinMediaFile') && !content.includes('supports up to 25MB lossless')) {
+      const targetPattern = /if\s*\(\s*mime\.startsWith\(\s*["']image\/["']\s*\)\s*\)\s*\{/
+      if (targetPattern.test(content)) {
+        const replacement = `if (mime.startsWith("image/")) {
+		let imgSize = 0;
+		try {
+			imgSize = fs.statSync(filePath).size;
+		} catch (err) {
+			logger.warn(\`[weixin] sendWeixinMediaFile: failed to stat image filePath=\${filePath}: \${err}\`);
+		}
+		if (imgSize > 0 && imgSize <= 2 * 1024 * 1024) {
+			logger.info(\`[weixin] sendWeixinMediaFile: uploading image filePath=\${filePath} to=\${to} (size=\${imgSize} <= 2MB)\`);
+			const uploaded = await uploadFileToWeixin({
+				filePath,
+				toUserId: to,
+				opts: uploadOpts,
+				cdnBaseUrl
+			});
+			logger.info(\`[weixin] sendWeixinMediaFile: image upload done filekey=\${uploaded.filekey} size=\${uploaded.fileSize}\`);
+			return sendImageMessageWeixin({
+				to,
+				text,
+				uploaded,
+				opts
+			});
+		}
+		logger.info(\`[weixin] sendWeixinMediaFile: image size (\${imgSize} bytes) > 2MB, routing to file attachment mode (supports up to 25MB lossless) to avoid Weixin CDN 500 error\`);
+	}`
+        const patched = content.replace(targetPattern, replacement)
+        if (patched !== content) {
+          writeFileSync(sdkEntry, patched, 'utf8')
+          logger?.info?.('[dsh-weixin-plus] 成功对 weixin-agent-sdk 应用大图无损分流自愈补丁（杜绝微信 CDN 500）')
+        }
+      }
+    }
+  } catch (err) {
+    logger?.warn?.(`[dsh-weixin-plus] 自愈检测 weixin-agent-sdk 异常（可忽略）：${err?.message || err}`)
+  }
+}
+
 export function apply(ctx, config) {
-  ctx.logger.warn('[dsh-weixin] BUILD filepush17 loaded (workspace attach + prepend mutable selection + default preset + warm resume + tools.schemas probe + weixin question waterfall + 归档自愈解归档 + 失败回合真错误回传 + 发图走 read_image 快路径并禁止漫游 + 不静默改写用户选的模型 + 兜底路由只挑静态表里存在的 id + 微信文字选项提问铁律每轮注入 + 长任务进度监听 + 空白会话防产生门禁 + 多文件推送与防锁增强)')
+  patchWeixinAgentSdk(ctx.logger)
+  ctx.logger.warn('[dsh-weixin] BUILD filepush18 loaded (workspace attach + prepend mutable selection + default preset + warm resume + tools.schemas probe + weixin question waterfall + 归档自愈解归档 + 失败回合真错误回传 + 发图走 read_image 快路径并禁止漫游 + 不静默改写用户选的模型 + 兜底路由只挑静态表里存在的 id + 微信文字选项提问铁律每轮注入 + 长任务进度监听 + 空白会话防产生门禁 + 多文件推送与防锁增强 + 大图智能无损分流防500)')
   // conversationId -> { agent, dispose, ownedByHost }
   const conversations = new Map()
   const inflight = new Map()
