@@ -63,7 +63,9 @@ window.__ModuleLoader__.load({
         }
 
         // 回退 HTTP fetch
-        const baseUrl = (typeof window !== 'undefined' && window.location && window.location.pathname.startsWith('/dsh/')) ? '/dsh/dsh-weixin-plus/' : '/dsh-weixin-plus/';
+        // 🔴 filepush19：HTTP 备用口已从 /dsh-weixin-plus 挪到 /dsh-weixin-plus-http
+        //   （RPC 通道占着 /dsh-weixin-plus，同 prefix+path 会 duplicate prefix route）。
+        const baseUrl = (typeof window !== 'undefined' && window.location && window.location.pathname.startsWith('/dsh/')) ? '/dsh/dsh-weixin-plus-http/' : '/dsh-weixin-plus-http/';
         const res = await fetch(baseUrl + action, {
           method: 'POST',
           headers: {

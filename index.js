@@ -94,6 +94,31 @@
  * 「等待你的操作」）。本条作为 [系统约定] 每轮随用户消息注入（同 SEND_FILE_HINT
  * 机制），执行层最上层保证；同时固化进 ~/.dsh/AGENTS.md 交互铁律第 6 条
  * （跨会话最上层兜底）与 Mnemon 记忆。
+ *
+ * 路由与注入修复（filepush19，2026-10-20 老总令「修复，更新版本。仓库同步」）：
+ *   现象①设置页报「获取微信通道状态失败: HTTP 405」（GET 404 / POST 405）；
+ *   现象②微信发消息回「模型调用失败: cannot create effect on inactive context」。
+ *   根因①：`connection.rpc.handle(channel, handler)` 内部会拿【读该服务的 ctx】
+ *     去 `owner.effect(() => owner.webServer.register(route))`（见官方
+ *     dsh-client-connection/lib/index.js:855-871）。本插件那段只 inject 了
+ *     ['connection']，ctx 里没有 webServer → 抛
+ *     `cannot get property "webServer" without inject`（cordis/lib/index.js:676），
+ *     RPC 通道注册失败。
+ *   根因②：RPC 通道注册成 `{kind:'prefix', path:'/dsh-weixin-plus'}`，而下方
+ *     HTTP 备用诊断口也注册 `{kind:'prefix', path:'/dsh-weixin-plus'}` —— 同 kind
+ *     同 path 必然 `webserver: duplicate prefix route`，两者只能活一个（谁活取决于
+ *     挂载顺序，实例一换路由就丢，正是 20:10 后 405 的来源）。
+ *   修法：①依赖改成 `['connection', 'webServer']`；②HTTP 备用口挪到独立路径
+ *     `/dsh-weixin-plus-http`（client.js 的回退 baseUrl 同步改），RPC 通道继续占
+ *     `/dsh-weixin-plus`，互不冲突。
+ *   补充（filepush20→21，实挂验证后追加）：只补 inject 仍不够。
+ *     filepush20 实测：报错消失但 `/dsh-weixin-plus` 仍 405 —— file:// 挂载的 ctx 下
+ *     `ctx.inject([...], cb)` 回调不再被调度，RPC 通道根本没注册。
+ *     filepush21 定案：在 apply 体内【直接】注册，并用
+ *     `ctx.extend({ webServer: ctx.get('webServer') })` 把 webServer 绑成自有属性后再
+ *     `rpcCtx.get('connection')`（官方 dsh-mnemon 同款写法，dsh-mnemon/lib/index.js:16539-16541，
+ *     自有属性命中代理的 Reflect.has 分支，绕过 inject 判定）。
+ *     缓存提示：宿主按 URL 缓存 ESM 模块，改完文件必须轮换挂载文件名（p2.js → p3.js → p4.js → …）。
  */
 import { createRequire } from 'node:module'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -695,7 +720,7 @@ function patchWeixinAgentSdk(logger) {
 
 export function apply(ctx, config) {
   patchWeixinAgentSdk(ctx.logger)
-  ctx.logger.warn('[dsh-weixin] BUILD filepush18 loaded (workspace attach + prepend mutable selection + default preset + warm resume + tools.schemas probe + weixin question waterfall + 归档自愈解归档 + 失败回合真错误回传 + 发图走 read_image 快路径并禁止漫游 + 不静默改写用户选的模型 + 兜底路由只挑静态表里存在的 id + 微信文字选项提问铁律每轮注入 + 长任务进度监听 + 空白会话防产生门禁 + 多文件推送与防锁增强 + 大图智能无损分流防500)')
+  ctx.logger.warn('[dsh-weixin] BUILD filepush22 loaded (workspace attach + prepend mutable selection + default preset + warm resume + tools.schemas probe + weixin question waterfall + 归档自愈解归档 + 失败回合真错误回传 + 发图走 read_image 快路径并禁止漫游 + 不静默改写用户选的模型 + 兜底路由只挑静态表里存在的 id + 微信文字选项提问铁律每轮注入 + 长任务进度监听 + 空白会话产生门禁 + 多文件推送与防锁增强 + 大图智能无损分流防500 + RPC依赖补webServer + HTTP备用口改独立路径防重复路由 + RPC owner 用 extend 绑定 webServer + RPC 通道改 apply 内直接注册且只注册带斜杠通道)')
   // conversationId -> { agent, dispose, ownedByHost }
   const conversations = new Map()
   const inflight = new Map()
@@ -1865,40 +1890,89 @@ export function apply(ctx, config) {
       }
 
       // 1. 注册 Cordis Connection RPC 通道（天然免 403，兼容斜杠/无斜杠前缀，标准 bad-request 错误信封）
-      ctx.inject(['connection'], (innerCtx) => {
-        const rpcHandler = async (actionOrEndpoint, payloadOrEmpty = {}) => {
-          try {
-            let act = actionOrEndpoint
-            let payload = payloadOrEmpty || {}
-            if (typeof act === 'string' && act.startsWith('/')) {
-              act = act.replace(/^\/+/, '')
-            }
-            const res = await handleAction(act, payload)
-            return { ok: true, value: res }
-          } catch (err) {
-            return {
-              ok: false,
-              error: {
-                code: 'bad-request',
-                message: err?.message || String(err),
-                details: { issues: [{ message: err?.message || String(err) }] }
-              }
+      //    🔴 405 根因①（filepush19→20→21 三轮排查定论）：
+      //    `connection.rpc.handle(channel, handler)` 内部会拿【读该服务的 ctx】去执行
+      //    `owner.effect(() => owner.webServer.register(route))`（官方
+      //    dsh-client-connection/lib/index.js:855-871）。而 dsh-client-connection 会把 shadow ctx
+      //    反解成父 ctx（lib/index.js:124），父 ctx 的 inject 里没有 webServer → 抛
+      //    `cannot get property "webServer" without inject`（cordis/lib/index.js:676）。
+      //    filepush20 把依赖补成 ['connection','webServer'] 后报错虽消失，但 RPC 通道仍不在
+      //    —— file:// 挂载的 ctx 下该 inject 回调不再被调度（实测 405 依旧）。
+      //    filepush21 修法：①在 apply 体内【直接】注册，不再依赖 ctx.inject 回调的调度；
+      //    ②先 `ctx.extend({ webServer: ctx.get('webServer') })` 把 webServer 绑成自有属性再读
+      //    `.connection`（官方 dsh-mnemon 同款写法，dsh-mnemon/lib/index.js:16539-16541）——
+      //    自有属性命中代理的 Reflect.has 分支，直接绕过 inject 判定。
+      const rpcHandler = async (actionOrEndpoint, payloadOrEmpty = {}) => {
+        try {
+          let act = actionOrEndpoint
+          let payload = payloadOrEmpty || {}
+          if (typeof act === 'string' && act.startsWith('/')) {
+            act = act.replace(/^\/+/, '')
+          }
+          const res = await handleAction(act, payload)
+          return { ok: true, value: res }
+        } catch (err) {
+          return {
+            ok: false,
+            error: {
+              code: 'bad-request',
+              message: err?.message || String(err),
+              details: { issues: [{ message: err?.message || String(err) }] }
             }
           }
         }
-        innerCtx.connection.rpc.handle('/dsh-weixin-plus', rpcHandler)
-        innerCtx.connection.rpc.handle('dsh-weixin-plus', rpcHandler)
-      })
+      }
+      const registerRpcChannels = (hostCtx) => {
+        try {
+          if (!hostCtx || typeof hostCtx.get !== 'function') return false
+          const rpcCtx =
+            typeof hostCtx.extend === 'function' ? hostCtx.extend({ webServer: hostCtx.get('webServer') }) : hostCtx
+          const connectionSvc = rpcCtx.get('connection')
+          if (!connectionSvc || !connectionSvc.rpc || typeof connectionSvc.rpc.handle !== 'function') {
+            ctx.logger.warn('[dsh-weixin] connection 服务不可用，RPC 通道未注册（客户端回退 HTTP 备用口）')
+            return false
+          }
+          // 只注册带斜杠的正式通道：webServer 会把 'dsh-weixin-plus'（无斜杠）归一成同一
+          // {kind:'prefix', path:'/dsh-weixin-plus'} → 第二次 register 必抛
+          // `webserver: duplicate prefix route`（filepush21 实测日志里的假失败）。
+          // client.js 的 RPC_CHANNEL 恒为 '/dsh-weixin-plus'，一次注册足够。
+          try {
+            connectionSvc.rpc.handle('/dsh-weixin-plus', rpcHandler)
+            ctx.logger.warn('[dsh-weixin] RPC 通道已注册：/dsh-weixin-plus')
+            return true
+          } catch (err) {
+            const msg = err?.message || String(err)
+            if (msg.includes('duplicate prefix route')) {
+              // 同一通道已由本次挂载的另一个实例注册（HMR/双挂载），视为成功
+              ctx.logger.warn('[dsh-weixin] RPC 通道已存在（重复注册被忽略）：/dsh-weixin-plus')
+              return true
+            }
+            ctx.logger.warn('[dsh-weixin] RPC 通道注册失败：' + msg)
+            return false
+          }
+        } catch (err) {
+          ctx.logger.warn('[dsh-weixin] RPC 通道注册异常：' + (err?.message || String(err)))
+          return false
+        }
+      }
+      if (!registerRpcChannels(ctx)) {
+        // 服务晚到时再补一次（保留 inject 兜底路径）
+        ctx.inject(['connection', 'webServer'], (innerCtx) => {
+          registerRpcChannels(innerCtx)
+        })
+      }
 
-      // 2. 同时提供 HTTP 路由作为备用诊断接口
+      // 2. HTTP 备用诊断口（client.js 在 RPC 拿不到 connection 时回退到这里）
+      //    🔴 filepush19：路径必须与上面 RPC 通道（/dsh-weixin-plus，同为 prefix）错开，
+      //    否则同 kind+path 重复注册必抛 `webserver: duplicate prefix route`（405 根因②）。
       ctx.inject(['webServer'], (innerCtx) => {
         return innerCtx.webServer.register({
           kind: 'prefix',
-          path: '/dsh-weixin-plus',
+          path: '/dsh-weixin-plus-http',
           authority: 'public',
           handler: async (req, res) => {
             const urlObj = new URL(req.url || '/', 'http://127.0.0.1')
-            const sub = urlObj.pathname.replace(/^\/dsh-weixin-plus\/?/, '') || 'status'
+            const sub = urlObj.pathname.replace(/^\/dsh-weixin-plus-http\/?/, '') || 'status'
             let body = {}
             if (req.method === 'POST') {
               try {
