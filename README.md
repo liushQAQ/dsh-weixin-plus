@@ -33,15 +33,15 @@
 1）在 profile 目录安装（`~/.dsh/profiles/<你的 profile>`）：
 
 ```bash
-npm i github:liushQAQ/dsh-weixin-plus#v1.0.7
-# 或使用 Release 附件：npm i ./dsh-weixin-plus-1.0.7.tgz
+npm i github:liushQAQ/dsh-weixin-plus
+# 或使用 Release 附件：npm i ./dsh-weixin-plus-<version>.tgz
 ```
 
 2）把包名加入 profile 的 bundle 列表（`package.json`）：
 
 ```json
 {
-  "dependencies": { "dsh-weixin-plus": "github:liushQAQ/dsh-weixin-plus#v1.0.7" },
+  "dependencies": { "dsh-weixin-plus": "github:liushQAQ/dsh-weixin-plus" },
   "dsh": { "profile": { "bundles": ["...", "dsh-weixin-plus"] } }
 }
 ```
